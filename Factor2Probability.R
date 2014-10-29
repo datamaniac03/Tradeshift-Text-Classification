@@ -3,15 +3,16 @@ Factor2Probability <- function(factorVector, probsOnly = FALSE, vectorOnly = FAL
   if (length(probVectorInput) > 0){
     probabilities <- probVectorInput
   }else{
-    probabilities <- table(factorVector) / length(factorVector)        
+    probabilities <- as.data.frame(table(factorVector))
+    probabilities$Freq <- probabilities$Freq / length(factorVector)        
   }
   if (probsOnly == TRUE){
     return(probabilities)
   } 
-  idx <- match(factorVector, names(probabilities))
-  probVector <- probabilities[idx]
-  probVector[idx == NA] <- mean(probVector, na.rm = TRUE)  
-  probVector[names(probVector) == ''] <- -999
+  idx <- match(factorVector, probabilities$factorVector)
+  probVector <- probabilities[idx, 'Freq']
+  probVector[idx == NA] <- min(probVector, na.rm = TRUE) #if a novel factor is found, round it to the lowest possible probability
+  probVector[factorVector == ''] <- -999
   if (vectorOnly == TRUE){
     return(probVector)    
   }else{
