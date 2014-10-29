@@ -1,5 +1,5 @@
 #TradeshiftMain
-#Ver 0.2
+#Ver 1.0 (First Submission)
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -93,7 +93,7 @@ hyperparametersRF <- sapply(yMatrix, function(target){
   cvmodel <- h2o.randomForest(x = seq(2, dim(trainHEX)[2] - 33),
                               y = as.character(target),
                               data = trainHEX[shuffledTrainIdx, ],
-                              nfolds = 4,
+                              nfolds = 5,
                               classification = TRUE,
                               type = "fast",
                               mtries = c(floor(sqrt(dim(trainHEX)[2] - 33)), floor(sqrt(dim(trainHEX)[2] - 33)) * 2, 
