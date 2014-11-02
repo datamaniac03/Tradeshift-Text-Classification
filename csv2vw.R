@@ -1,5 +1,5 @@
-csv2vw <- function(csvFile, Id, labels,
-                   commaSeparated = TRUE, fullTextInput = TRUE, inMemory = TRUE, outputFileDir = NULL){
+csv2vw <- function(csvFile, Id, labels, outputFile = NULL,
+                   commaSeparated = TRUE, fullTextInput = TRUE, inMemory = TRUE){
   
 
 #  Features have to be in the form of:
@@ -61,5 +61,6 @@ csv2vw <- function(csvFile, Id, labels,
   }, numIdx = numericIdx, catIdx = categoricalIdx, namesVec = dataNames, 
   idVec = IdIdx, labelsCols = LabelIdx)
   
-  return(vwText)
+  write.table(vwText, file = outputFile)
+  #return(vwText)
 }
