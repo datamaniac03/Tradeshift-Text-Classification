@@ -1,5 +1,5 @@
 #TradeshiftMain
-#Ver 1.2 (First Improvement score)
+#Ver 1.3 (First Improvement score)
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
