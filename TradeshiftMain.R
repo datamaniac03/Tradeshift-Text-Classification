@@ -1,5 +1,5 @@
 #TradeshiftMain
-#Ver 1.1 (First Improvement score)
+#Ver 1.2 (First Improvement score)
 
 #Init-----------------------------------------------
 rm(list=ls(all=TRUE))
@@ -8,8 +8,6 @@ rm(list=ls(all=TRUE))
 require('ggplot2')
 require('caret')
 require('Metrics')
-require('RVowpalWabbit')
-require('e1071')
 
 #Set Working Directory------------------------------
 workingDirectory <- '/home/wacax/Wacax/Kaggle/Tradeshift/Tradeshift/'
@@ -19,8 +17,8 @@ dataDirectory <- '/home/wacax/Wacax/Kaggle/Tradeshift/Tradeshift/Data/'
 vw77Dir = '/home/wacax/vowpal_wabbit-7.7/vowpalwabbit/'
 vwDataDirectory <- '/home/wacax/Wacax/Kaggle/Tradeshift/Tradeshift/Data/vw/'
 
-
 source(paste0(workingDirectory, 'Factor2Probability.R'))
+source(paste0(workingDirectory, 'TreeFinder.R'))
 source(paste0(workingDirectory, 'csv2vw.R'))
 
 #Load Data------------------------------------------
@@ -85,7 +83,6 @@ test <- read.csv(paste0(dataDirectory, 'testProbs.csv'), nrows = 1000, header = 
 
 #Hyperparameter Tuning-----------------------------
 #Cross Validation Control Params
-
 #Random Forests h2o.ai
 #possible targets
 yMatrix <- names(trainLabels[1:10, ])[2:length(names(trainLabels[1:10, ]))]
@@ -107,9 +104,10 @@ hyperparametersRF <- sapply(yMatrix, function(target){
                               nfolds = 5,
                               classification = TRUE,
                               type = "fast",
-                              mtries = c(floor(sqrt(dim(trainHEX)[2] - 33)), floor((dim(trainHEX)[2] - 33) / 3), 
-                                         floor((dim(trainHEX)[2] - 33) / 2))
-                              )
+                              mtries = c(floor(sqrt(dim(trainHEX)[2] - 33)), floor((dim(trainHEX)[2] - 33) / 2.5), 
+                                         floor((dim(trainHEX)[2] - 33) / 2)), 
+                              verbose = TRUE)
+  
   model <- cvmodel@model[[1]] #If cv model is a grid search model  
   predicted <- as.data.frame(h2o.predict(model, trainHEX[shuffledValIdx, ])[,3])
   logLossError <- logLoss(trainLabels[shuffledValIdx, ], predicted)
@@ -121,39 +119,66 @@ hyperparametersRF <- sapply(yMatrix, function(target){
 })
 #h2o shutdown WARNING, All data on the server will be lost!
 h2o.shutdown(h2oServer, prompt = FALSE)
+
+#GBM
+train <- read.csv(paste0(dataDirectory, 'trainProbsFull.csv'), nrow = 300000, header = TRUE, stringsAsFactors = TRUE)
+train$y33 <- as.factor(train$y33)
+#Cross Validation Control Params
+GBMControl <- trainControl(method = "cv",
+                           number = 5,
+                           verboseIter = TRUE,
+                           classProbs = TRUE)
+
+gbmGrid <- expand.grid(.interaction.depth = c(2, 6),
+                       .shrinkage = c(0.001, 0.003),
+                       .n.trees = 1250)
+
+#Hiper parameter 5-fold Cross-validation "y33"
+set.seed(1005)
+randomSubset <- sample.int(nrow(train), floor(nrow(train) * 0.8))
+validationSubset <- which(!(1:nrow(train) %in% randomSubset))
+
+gbmMOD <- train(form = y33 ~ .,
+                data = train[randomSubset, c(seq(2, ncol(train) - 33), ncol(train))],
+                method = "gbm",
+                tuneGrid = gbmGrid,
+                trControl = GBMControl,
+                distribution = 'bernoulli',
+                nTrain = floor(floor(nrow(train) * 0.8) * 0.7),
+                verbose = TRUE)
+
+#Plot Cross Validation
+ggplot(gbmMOD$finalModel) + theme(legend.position = "top")
+
+#Find optimal number of trees
+treesList <- TreeFinder(gbmMOD$finalModel, dataNew = train[randomSubset, c(seq(2, ncol(train) - 33), ncol(train))], 
+                        maxIt = 15000, returnModel = TRUE)
+
+optimalNoOfTrees <- treesList[[1]]
+  
+#Estimated LogLoss score
+predicted <- predict(treesList[[2]], train[validationSubset, seq(2, ncol(train) - 33)],
+                     n.trees = optimalNoOfTrees, type = 'response')
+logLossError <- logLoss(as.numeric(train[validationSubset, ncol(train)]), predicted)
+print(logLossError)
+
                              
 #Vowpal Wabbit
 #Probabilites
 system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'trainProbs33.vw -f ', vwDataDirectory,
-             'modely33.vw --loss_function logistic -b 28 -c -k --passes 3 --ngram 2 
-             -q hh -q hb -q hp -q hr'))
-system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'trainProbs32.vw -f ', vwDataDirectory,
-              'modely32.vw --loss_function logistic -b 28 -c -k --passes 3 --ngram 2 
-              -q hh -q hb -q hp -q hr'))
+              'modely33AllQ.vw --loss_function logistic -b 28 -c -k --passes 3 --ngram 2 
+             -q ::'))
 #Original Data
 system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'train33Original.vw -f ', vwDataDirectory,
               'modely33Original.vw --loss_function logistic -b 28 -c -k --passes 3 --ngram 2 
-              -q hh -q hb -q hp -q hr'))
-system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'train32Original.vw -f ', vwDataDirectory,
-              'modely32Original.vw --loss_function logistic -b 28 -c -k --passes 3 --ngram 2 
-              -q hh -q hb -q hp -q hr'))
+              -q ::'))
 
 #Probablities
 system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'testProbs.vw -t -i ', vwDataDirectory, 
-              'modely33.vw -p ', vwDataDirectory, 'predsy33.txt'))
-system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'testProbs.vw -t -i ', vwDataDirectory, 
-              'modely32.vw -p ', vwDataDirectory, 'predsy32.txt'))
+              'modely33AllQ.vw -p ', vwDataDirectory, 'predsy33.txt'))
 #Original Data
 system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'testProbs.vw -t -i ', vwDataDirectory, 
               'modely33Original.vw -p ', vwDataDirectory, 'predsy33Original.txt'))
-system(paste0(vw77Dir, 'vw -d ', vwDataDirectory, 'testProbs.vw -t -i ', vwDataDirectory, 
-              'modely32Original.vw -p ', vwDataDirectory, 'predsy32Original.txt'))
-
-#or use the RVowpalWabbit package
-#trainvw <- c('-d', paste0(vwDataDirectory, 'trainProbs33.vw'), '-f', paste0(vwDataDirectory, 'trainProbs33.vw'),
-#             '--loss_function', 'logistic', '-b', 28, '-c', '-k', '--passes', 3, 'l', 0.6, '-q', 'hh', 
-#             '-q', 'hb', '-q', 'hp', '-q', 'hr', '--ngram', 2)
-#res <- vw(trainvw)
 
 #Modelling----------------------
 #Random Forests
@@ -174,50 +199,102 @@ predictionsRF <- apply(hyperparametersRF, 1, function(hyperparameters, trainHex,
     print(h2o.ls(h2oServer))
     RFModel <- h2o.randomForest(x = seq(2, dim(trainHex)[2] - 33),
                                 y = as.character(hyperparameters[1]),
-                                data = trainHex,
-                                ntree = 65,
-                                depth = 25,
+                                data = trainHex, 
+                                type = "BigData",
+                                ntree = 120,
+                                depth = 45,
                                 classification = TRUE,
-                                type = "fast", 
-                                mtries = floor((dim(trainHEX)[2] - 33) / 3), 
+                                mtries = floor((dim(trainHEX)[2] - 33) / 2.5), 
                                 verbose = TRUE)  
   
-    GBMPrediction <- as.data.frame(h2o.predict(RFModel, newdata = testHex)[, 3])  
+    RFPrediction <- as.data.frame(h2o.predict(RFModel, newdata = testHex)[, 3])  
     print(h2o.ls(h2oServer))
     h2o.rm(object = h2oServer, keys = h2o.ls(h2oServer)$Key[1:(length(h2o.ls(h2oServer)$Key) - 2)])
-    return(GBMPrediction)
+    return(RFPrediction)
   } 
 }, trainHex = trainHEX, testHex = testHEX, labelsHex = trainLabelHEX)
 
 #h2o shutdown WARNING, All data on the server will be lost!
 h2o.shutdown(h2oServer, prompt = FALSE)
 
-#Predictions----------------------
+#Predictions RF----------------------
 #Predictions Matrix
 predictionsRF <- as.data.frame(predictionsRF)
 names(predictionsRF) <- as.character(hyperparametersRF[, 1])
 #Write .csv 
 submissionTemplate$pred <- as.vector(t(predictionsRF))
-write.csv(submissionTemplate, file = "PredictionRFII.csv", row.names = FALSE)
-system('zip PredictionRFII.zip PredictionRFII.csv')
+write.csv(submissionTemplate, file = "PredictionRFIII.csv", row.names = FALSE)
+system('zip PredictionRFIII.zip PredictionRFIII.csv')
 
-#Vowpal Wabbit column replacement
-replacedPredictions <- function(predictions, columns2Replace, originalData = FALSE){
-  predictionsVWSigmoid <- sapply(columns2Replace, function(column){  
-    if (originalData == FALSE){
+#GBM-------------------------
+## Launch H2O 
+require('h2o')
+h2oServer <- h2o.init(ip = "localhost", port = 54321, max_mem_size = '13g', startH2O = TRUE, nthreads = -1)
+
+#Load Data
+trainHEX <- h2o.importFile(h2oServer, path = paste0(dataDirectory, 'trainProbsFull.csv'))
+testHEX <- h2o.importFile(h2oServer, path = paste0(dataDirectory, 'testProbs.csv'))
+
+print(h2o.ls(h2oServer))
+GBMModely33 <- h2o.gbm(x = seq(2, dim(trainHEX)[2] - 33),
+                       y = dim(trainHEX)[2],
+                       data = trainHEX, 
+                       n.trees = optimalNoOfTrees,
+                       interaction.depth = as.numeric(gbmMOD$bestTune[2]),
+                       shrinkage = as.numeric(gbmMOD$bestTune[3]))  
+
+#Predictions GBM----------------------
+GBMPrediction <- as.data.frame(h2o.predict(GBMModely33, newdata = testHEX)[, 3])  
+names(GBMPrediction) <- 'GBMy33'
+print(h2o.ls(h2oServer))
+h2o.rm(object = h2oServer, keys = h2o.ls(h2oServer)$Key[1:(length(h2o.ls(h2oServer)$Key) - 2)])
+#h2o shutdown WARNING, All data on the server will be lost!
+h2o.shutdown(h2oServer, prompt = FALSE)
+#Write .csv 
+write.csv(GBMPrediction, file = paste0(dataDirectory, "GBMPredictiony33.csv"), row.names = FALSE)
+
+
+#Column replacement
+replacedPredictions <- function(predictions, columns2Replace, replacement = 'vwProbs', 
+                                stackingModel = NULL, targetsMatrix = NULL){
+  require('e1071')  
+  predictionsOtherModel <- sapply(columns2Replace, function(column){  
+    if (replacement == 'vwProbs'){
       predictionsvw <- read.table(paste0(vwDataDirectory, 'predsy', column, '.txt'))
       return(sigmoid(predictionsvw[, 1]))
-    }else{
+    }
+    if (replacement == 'vwOriginal'){
       predictionsvw <- read.table(paste0(vwDataDirectory, 'predsy', column, 'Original.txt'))
       return(sigmoid(predictionsvw[, 1]))
-    }    
+    }
+    if (replacement == 'GBM'){
+      predictionsvw <- read.csv(paste0(dataDirectory, 'GBMPredictiony', column, '.csv'))
+      return(predictionsvw[, 1])
+    }
+    if (replacement == 'stacking'){
+      replacedVwProbs <- replacedPredictions(predictions, columns2Replace, replacement = 'vwProbs')
+      replacedVwOriginal <- replacedPredictions(predictions, columns2Replace, replacement = 'vwOriginal')      
+      replacedGBM <- replacedPredictions(predictions, columns2Replace, replacement = 'GBM')      
+    }
   })
-  predictions[, columns2Replace] <- predictionsVWSigmoid
+  predictions[, columns2Replace] <- predictionsOtherModel
   return(predictions)
 }
 
-replacedPredictionsDataFrame <- replacedPredictions(predictionsRF, 33)
+replacedPredictionsDataFrame <- replacedPredictions(predictionsRF, 33, replacement = 'GBM')
 #Write .csv 
 submissionTemplate$pred <- as.vector(t(replacedPredictionsDataFrame))
-write.csv(submissionTemplate, file = "PredictionRFVWI.csv", row.names = FALSE)
-system('zip PredictionRFVWI.zip PredictionRFVWI.csv')
+write.csv(submissionTemplate, file = "PredictionRFGBMI.csv", row.names = FALSE)
+system('zip PredictionRFGBMI.zip PredictionRFGBMI.csv')
+
+replacedPredictionsDataFrame <- replacedPredictions(predictionsRF, 33, replacement = 'vwProbs')
+#Write .csv 
+submissionTemplate$pred <- as.vector(t(replacedPredictionsDataFrame))
+write.csv(submissionTemplate, file = "PredictionRFVWIII.csv", row.names = FALSE)
+system('zip PredictionRFVWIII.zip PredictionRFVWIII.csv')
+
+replacedPredictionsDataFrame <- replacedPredictions(predictionsRF, 33, replacement = 'vwOriginal')
+#Write .csv 
+submissionTemplate$pred <- as.vector(t(replacedPredictionsDataFrame))
+write.csv(submissionTemplate, file = "PredictionRFVWIIOriginal.csv", row.names = FALSE)
+system('zip PredictionRFVWIIOriginal.zip PredictionRFVWIIOriginal.csv')
